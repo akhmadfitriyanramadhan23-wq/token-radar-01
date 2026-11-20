@@ -129,11 +129,11 @@ tbody tr[data-selected="true"] { background: var(--surface-2); box-shadow: inset
 
 .detail {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(540px, 92vw); z-index: 10;
+  margin: 0 0 0 auto; max-height: 100%;
   background: var(--surface); border-left: 1px solid var(--border); padding: var(--step-5);
   overflow-y: auto; color: var(--ink);
 }
 .detail[hidden] { display: none; }
-.detail { margin: 0 0 0 auto; max-height: 100%; }
 .detail::backdrop { background: rgba(4, 8, 6, 0.6); }
 .detail-head { display: flex; align-items: start; justify-content: space-between; gap: var(--step-4); }
 .detail-head > div { min-width: 0; }
