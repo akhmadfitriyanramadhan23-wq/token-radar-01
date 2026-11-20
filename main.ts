@@ -70,7 +70,13 @@ function copyFiles(from: string, to: string): string[] {
   return copied;
 }
 
-copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+const dashboardFiles = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+for (const needed of ['index.html', 'app.css', 'app.js']) {
+  if (!dashboardFiles.includes(needed)) {
+    process.stderr.write(`token radar: dashboard/ is missing ${needed}: the gate needs the page, its stylesheet and its script\n`);
+    process.exit(1);
+  }
+}
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
