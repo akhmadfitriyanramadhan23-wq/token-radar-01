@@ -1,18 +1,18 @@
 // The token radar's model, radar-2: one snapshot of the protocol universe in, one ranked board out.
 //
-// The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds the
-// early radar: pre-token protocols below the watchlist floor, by the same rule the house drew the
-// watchlist with. A protocol is rankable when it records no token (no market cap, no CoinGecko id, no
-// symbol) and is not a wrapped, staked or bridged product of a token that already trades: its category
-// is not Bridge, Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC, Cross Chain Bridge
-// or CEX, its name carries no whole word wrapped, staked or staking, it does not begin with an
-// exchange's name, and it does not end in a version marker. The live-token protocols are kept apart
-// and shown as the market's own values, never mixed into the ranked board.
+// The board starts from the snapshot's watchlist — the floor, never a ceiling — and adds the early
+// radar: pre-token protocols below the watchlist floor, judged by the same rule the house drew the
+// watchlist with. A protocol is rankable when it records no token (no market cap, no CoinGecko id,
+// no symbol) and is not a wrapped, staked or bridged product of a token that already trades: its
+// category is not Bridge, Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC, Cross
+// Chain Bridge or CEX, its name carries no whole word wrapped, staked or staking, it does not begin
+// with an exchange's name, and it does not end in a version marker. The live-token protocols are
+// kept apart and shown with the market's own values, never mixed into the ranked board.
 //
 // The early radar stops at the floor on purpose. Above the floor the house's rule already spoke: a
-// protocol at or above $50M that the watchlist leaves out is left out for a reason the snapshot does
-// not show (DefiLlama's parentProtocol, which is not one of the snapshot's ten fields), so this entry
-// does not second-guess it by ranking such a protocol as pre-token.
+// protocol at or above $50M that the watchlist leaves out is left out for a reason the snapshot
+// does not show (DefiLlama's parentProtocol, which is not one of the snapshot's ten fields), so
+// this entry does not second-guess it by ranking such a protocol as pre-token.
 //
 // Implied value follows only from the snapshot's own figures, four signals, no name special-cased:
 //
@@ -23,12 +23,12 @@
 //   breadth    = 1 + 0.03 x min(chains, 5)
 //   implied    = max(1, round(base x growthMult x maturity x breadth))
 //
-// TVL is the size of the prize. Seven-day growth is momentum: a protocol gaining TVL is gaining the
-// users a launch would pay. Age with no token is the track record: a protocol that has run for years
-// without issuing a token has more to price in when it does, capped at three years so age alone never
-// dominates. Chain breadth is reach: a protocol live on more chains has a wider future holder base and
-// more surface to farm on, capped at five chains for at most +15% so it never outruns TVL. The
-// constants are stated in the dashboard and changeable in the model sandbox.
+// TVL is the size of the prize. Seven-day growth is momentum: a protocol gaining TVL is gaining
+// the users a launch would pay. Age with no token is the track record: a protocol that has run for
+// years without issuing a token has more to price in when it does, capped at three years so age
+// alone never dominates. Chain breadth is reach: a protocol live on more chains has a wider future
+// holder base and more surface to farm on, capped at five chains for at most +15% so it never
+// outruns TVL. The constants are stated in the dashboard and changeable in the model sandbox.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -178,6 +178,9 @@ export class SnapshotError extends Error {
 
 const DAY_MS = 86_400_000;
 
+/** Four decimals, for the multipliers the board and the page both carry. */
+const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+
 /** A finite number, else `fallback`. */
 function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -243,13 +246,16 @@ function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
 
-/** One sentence saying, from the figures alone, why this protocol ranks where it does. */
-export function whyRank(p: SnapshotProtocol, implied: number, growthPct: number, breadthMult: number, age: number | null): string {
+/** One sentence saying, from the figures alone, why this protocol ranks where it does. The reach
+ * clause appears only when the breadth multiplier beats a single chain's worth of reach, read from
+ * the model itself rather than a hard-coded 1.03, so a sandbox that changes the per-chain increment
+ * cannot leave the sentence disagreeing with the number. */
+export function whyRank(p: SnapshotProtocol, implied: number, growthPct: number, breadthMult: number, age: number | null, model: ModelConstants): string {
   const tvl = p.tvl_usd >= 1e9 ? `$${(p.tvl_usd / 1e9).toFixed(2)}B` : `$${Math.round(p.tvl_usd / 1e6)}M`;
   const growth = p.change_7d === null ? 'with no seven-day change reported' : growthPct >= 0 ? `growing +${growthPct.toFixed(1)}% over seven days` : `down ${Math.abs(growthPct).toFixed(1)}% over seven days`;
   const ageText = age === null ? 'with no listing date on record' : age >= 365 ? `listed ${(age / 365).toFixed(1)} years ago` : `listed ${age} days ago`;
   const chains = p.chains.length === 0 ? 'on an unnamed chain' : p.chains.length === 1 ? `on ${p.chains[0]}` : `across ${p.chains.length} chains`;
-  const breadth = breadthMult > 1.03 ? `, which lifts the value by ${Math.round((breadthMult - 1) * 100)}% for its reach` : '';
+  const breadth = breadthMult > 1 + model.breadth_per_chain ? `, which lifts the value by ${Math.round((breadthMult - 1) * 100)}% for its reach` : '';
   return `${tvl} of TVL, ${growth}, ${ageText} with no token on record, ${chains}${breadth} — implied $${implied.toLocaleString('en-US')}.`;
 }
 
@@ -300,12 +306,10 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       chains_count: s.p.chains.length,
       age_days: s.age,
     },
-    why: whyRank(s.p, s.implied, s.growthPct, s.breadthMult, s.age),
+    why: whyRank(s.p, s.implied, s.growthPct, s.breadthMult, s.age, model),
     farm_steps: farmSteps(s.p, s.age).map(stepText),
   }));
 }
-
-const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
 export function stepText(step: FarmStep): string {
@@ -336,38 +340,96 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
+/** Whether a lower-cased category carries any of the given words; the farm actions share this test so a category is read the same way in both of them. */
+function hasAny(category: string, ...keys: string[]): boolean {
+  return keys.some((k) => category.includes(k));
+}
+
+/** One category rule: the words that select it and the two actions it gives. */
+interface CategoryRule {
+  keys: string[];
+  first: (name: string, capital: number, chain: string) => string;
+  second: (name: string, capital: number, chain: string) => string;
+}
+
+/**
+ * The category's actions as data, not two matching if-chains: one rule per kind of protocol, in the
+ * order they are tried. The dashboard carries the same table, so the plan the page shows is the plan
+ * the board holds; adding a kind of protocol is one entry here and one there, never a second chain.
+ */
+const CATEGORY_RULES: CategoryRule[] = [
+  {
+    keys: ['lend', 'cdp', 'collateral'],
+    first: (name, capital, chain) => `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`,
+    second: (name, capital, chain) => `Borrow a small amount against the supply on ${name} and repay it within a week, so the wallet shows both sides of the market.`,
+  },
+  {
+    keys: ['dex', 'yield', 'leveraged farm'],
+    first: (name, capital, chain) => `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`,
+    second: (name, capital, chain) => `Swap a small amount through ${name}'s own router on ${chain}, so the wallet shows a trade as well as liquidity.`,
+  },
+  {
+    keys: ['bridge'],
+    first: (name, capital, chain) => `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`,
+    second: (name, capital, chain) => `Use the bridged funds for one swap or deposit on ${chain} instead of bridging straight back.`,
+  },
+  {
+    keys: ['staking', 'restak'],
+    first: (name, capital, chain) => `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`,
+    second: (name, capital, chain) => `Delegate a second, smaller stake through ${name} a week later to show repeat activity.`,
+  },
+  {
+    keys: ['perpetual', 'derivative'],
+    first: (name, capital, chain) => `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`,
+    second: (name, capital, chain) => `Close the hedge and open a second small position in the opposite direction a week later.`,
+  },
+  {
+    keys: ['prediction'],
+    first: (name, capital, chain) => `Fund $${capital} and place one market position on ${name}.`,
+    second: (name, capital, chain) => `Settle the first market, then place a second position on a different market on ${name}.`,
+  },
+  {
+    keys: ['curator', 'allocator'],
+    first: (name, capital, chain) => `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`,
+    second: (name, capital, chain) => `Deposit into a second ${name} vault with a different strategy from the same wallet.`,
+  },
+  {
+    keys: ['stable'],
+    first: (name, capital, chain) => `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`,
+    second: (name, capital, chain) => `Hold the stable asset through one weekly points snapshot, then move a small amount to a second use.`,
+  },
+  {
+    keys: ['rwa'],
+    first: (name, capital, chain) => `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`,
+    second: (name, capital, chain) => `Reinvest the first yield distribution into the same asset instead of withdrawing it.`,
+  },
+  {
+    keys: ['insurance'],
+    first: (name, capital, chain) => `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`,
+    second: (name, capital, chain) => `Buy a second, smaller cover on a different pool from ${name}.`,
+  },
+];
+
+/** The first rule whose words a category carries, or undefined when none matches. */
+function ruleFor(category: string): CategoryRule | undefined {
+  const c = category.toLowerCase();
+  return CATEGORY_RULES.find((r) => hasAny(c, ...r.keys));
+}
+
 /** The category's one action, in the words a farmer can follow. */
 function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
-  const c = (p.category ?? '').toLowerCase();
-  const name = p.name;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`;
-  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`;
-  if (c.includes('bridge')) return `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`;
-  if (c.includes('staking') || c.includes('restak')) return `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`;
-  if (c.includes('perpetual') || c.includes('derivative')) return `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`;
-  if (c.includes('prediction')) return `Fund $${capital} and place one market position on ${name}.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`;
-  if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`;
-  if (c.includes('rwa')) return `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`;
-  if (c.includes('insurance')) return `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`;
-  return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
+  const rule = ruleFor(p.category ?? '');
+  return rule === undefined
+    ? `Deposit $${capital} of USDC into ${p.name} on ${chain} and keep the position open.`
+    : rule.first(p.name, capital, chain);
 }
 
 /** A second, different action on the same protocol, so the wallet shows more than one kind of activity. */
 function secondActionFor(p: SnapshotProtocol, capital: number, chain: string): string {
-  const c = (p.category ?? '').toLowerCase();
-  const name = p.name;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Borrow a small amount against the supply on ${name} and repay it within a week, so the wallet shows both sides of the market.`;
-  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Swap a small amount through ${name}'s own router on ${chain}, so the wallet shows a trade as well as liquidity.`;
-  if (c.includes('bridge')) return `Use the bridged funds for one swap or deposit on ${chain} instead of bridging straight back.`;
-  if (c.includes('staking') || c.includes('restak')) return `Delegate a second, smaller stake through ${name} a week later to show repeat activity.`;
-  if (c.includes('perpetual') || c.includes('derivative')) return `Close the hedge and open a second small position in the opposite direction a week later.`;
-  if (c.includes('prediction')) return `Settle the first market, then place a second position on a different market on ${name}.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit into a second ${name} vault with a different strategy from the same wallet.`;
-  if (c.includes('stable')) return `Hold the stable asset through one weekly points snapshot, then move a small amount to a second use.`;
-  if (c.includes('rwa')) return `Reinvest the first yield distribution into the same asset instead of withdrawing it.`;
-  if (c.includes('insurance')) return `Buy a second, smaller cover on a different pool from ${name}.`;
-  return `Make a second, different action on ${name} — a swap, a deposit or a vote — from the same wallet a week later.`;
+  const rule = ruleFor(p.category ?? '');
+  return rule === undefined
+    ? `Make a second, different action on ${p.name} — a swap, a deposit or a vote — from the same wallet a week later.`
+    : rule.second(p.name, capital, chain);
 }
 
 /**
@@ -480,6 +542,21 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   return { board, radar };
 }
 
+/** A string field, or null when the record carries anything else. */
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+/** A finite number field, or null when the record carries anything else. */
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** A string-array field: every string it holds, or an empty array. */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((c): c is string => typeof c === 'string') : [];
+}
+
 /** The snapshot out of a file's text, refused unless it is the shape the model scores. */
 export function parseSnapshot(text: string): Snapshot {
   let raw: unknown;
@@ -498,20 +575,20 @@ export function parseSnapshot(text: string): Snapshot {
   const protocols = o.protocols.map((v, i) => {
     if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
     const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
+    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd) || p.tvl_usd < 0) {
       throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
     }
     return {
       slug: p.slug,
       name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
+      category: asString(p.category),
+      chains: stringList(p.chains),
       tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
+      change_7d: asNumber(p.change_7d),
+      mcap_usd: asNumber(p.mcap_usd),
+      listed_at: asString(p.listed_at),
+      gecko_id: asString(p.gecko_id),
+      symbol: asString(p.symbol),
     };
   });
   return {
